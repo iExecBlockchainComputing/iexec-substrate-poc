@@ -27,7 +27,8 @@ pub struct Task<Hash> {
 pub struct Contribution<Hash> {
     id: Hash,
 	task_id: Hash,
-    contribution: Hash
+    result_vote: Hash,
+	result_seal: Hash,         
 }
 
 /// The module's configuration trait.
@@ -48,12 +49,19 @@ decl_storage! {
 		// `get(something)` is the default getter which returns either the stored `u32` or `None` if nothing stored
 		Something get(something): Option<u32>;
         Tasks get(task): map T::Hash => Task<T::Hash>;
+		Contributions get(contribution): map T::Hash => Contribution<T::Hash>;
 	    ModuleSalt: u64;
 
 		AllTasksCount get(all_tasks_count): u64;
 		AllTasksArray get(task_by_index): map u64 => T::Hash;
 		AllTasksIndex: map T::Hash => u64;
 
+		ContributionsArray get(task_contributions_by_index): map (T::Hash, u64) => T::Hash;
+        ContributionsCount get(task_contributions_count): map T::Hash => u64;
+		//ContributionsIndex: map (T::Hash, T::Hash) => u64;
+		// as contribution only for one task can be simplify by :
+		ContributionsIndex: map T::Hash => u64;
+		
 	}
 }
 
@@ -80,8 +88,8 @@ decl_module! {
 			Ok(())
 		}
 
-		pub fn create_task(origin) -> Result {
-       		let sender = ensure_signed(origin)?;
+		pub fn create_task(_origin) -> Result {
+       		let sender = ensure_signed(_origin)?;
 
 
             // `nonce` and `random_hash` generation can stay here
@@ -118,10 +126,40 @@ decl_module! {
 		}
 
 
-		pub fn contribute(origin,task_id: T::Hash, contribution: T::Hash) -> Result {
-			let worker = ensure_signed(origin)?;
-			ensure!(<Tasks<T>>::exists(task_id), "Task must exist");
-			Self::deposit_event(RawEvent::ContributionReceived(worker, task_id,contribution));		
+		pub fn contribute(_origin,_task_id: T::Hash, _result_vote: T::Hash,_result_seal: T::Hash) -> Result {
+			let worker = ensure_signed(_origin)?;
+			ensure!(<Tasks<T>>::exists(_task_id), "Task must exist");
+
+			
+            let contribution_id = (_task_id, &worker, _result_vote)
+                .using_encoded(<T as system::Trait>::Hashing::hash);
+
+         	let new_contribution= Contribution {
+                id: contribution_id,
+				task_id:_task_id,
+				result_vote:_result_vote,
+				result_seal:_result_seal
+            };
+			 ensure!(!<Tasks<T>>::exists(contribution_id), "Contribution already exists");
+
+  			<Contributions<T>>::insert(contribution_id, new_contribution);
+
+        	let task_contributions_count = Self::task_contributions_count(&_task_id);
+
+       		let new_task_contributions_count = task_contributions_count.checked_add(1)
+            .ok_or("Overflow adding a new Contribution to Task")?;
+
+			<ContributionsArray<T>>::insert((_task_id.clone(), task_contributions_count), contribution_id);
+			<ContributionsCount<T>>::insert(&_task_id, new_task_contributions_count);
+			<ContributionsIndex<T>>::insert(contribution_id, task_contributions_count);
+
+			Self::deposit_event(RawEvent::ContributionReceived(worker, _task_id,_result_vote));		
+			Ok(())
+		}
+
+		pub fn reveal(_origin,_task_id: T::Hash,_result_unseal: T::Hash) -> Result {
+			let worker = ensure_signed(_origin)?;
+			//TODO
 			Ok(())
 		}
 		
