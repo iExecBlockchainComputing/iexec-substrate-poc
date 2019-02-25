@@ -14,13 +14,17 @@ use support::{decl_module, decl_storage, decl_event, StorageValue, StorageMap,en
 use system::ensure_signed;
 
 
-use runtime_primitives::traits::Hash;
+use runtime_primitives::traits::{Hash};
+
 
 
 #[derive(Encode, Decode, Default, Clone, PartialEq)]
 pub struct Task<Hash> {
     id: Hash,
-    consensus: Hash
+	threshold:u64,
+	// simplify replication for this poc of https://docs.iex.ec/pocosrc/poco-trust.html#trust2018 
+	//https://github.com/iExecBlockchainComputing/iexec-doc/raw/master/techreport/iExec_PoCo_and_trustmanagement_v1.pdf
+
 }
 
 #[derive(Encode, Decode, Default, Clone, PartialEq)]
@@ -52,15 +56,19 @@ decl_storage! {
 		Contributions get(contribution): map T::Hash => Contribution<T::Hash>;
 	    ModuleSalt: u64;
 
+		TasksConsensus get(task_consensus): map T::Hash => T::Hash;
+
 		AllTasksCount get(all_tasks_count): u64;
 		AllTasksArray get(task_by_index): map u64 => T::Hash;
 		AllTasksIndex: map T::Hash => u64;
 
 		ContributionsArray get(task_contributions_by_index): map (T::Hash, u64) => T::Hash;
         ContributionsCount get(task_contributions_count): map T::Hash => u64;
-		//ContributionsIndex: map (T::Hash, T::Hash) => u64;
-		// as contribution only for one task can be simplify by :
 		ContributionsIndex: map T::Hash => u64;
+		
+
+		ContributionsResultVoteCount get(task_contributions_result_vote_count): map (T::Hash, T::Hash) => u64;
+
 		
 	}
 }
@@ -88,7 +96,7 @@ decl_module! {
 			Ok(())
 		}
 
-		pub fn create_task(_origin) -> Result {
+		pub fn create_task(_origin,_threshold: u64) -> Result {
        		let sender = ensure_signed(_origin)?;
 
 
@@ -99,10 +107,11 @@ decl_module! {
 				<system::Module<T>>::random_seed(), &sender, salt)
                 .using_encoded(<T as system::Trait>::Hashing::hash);
 
-			let consensus_initial_value=0;
          	let new_task = Task {
                 id: random_hash,
-                consensus: consensus_initial_value.using_encoded(<T as system::Trait>::Hashing::hash),
+                //consensus: consensus_initial_value.using_encoded(<T as system::Trait>::Hashing::hash),
+				//consensus:0.using_encoded(<T as system::Trait>::Hashing::hash),
+				threshold:_threshold
             };
 			// ACTION: Move this collision check to the `_mint()` function
             ensure!(!<Tasks<T>>::exists(random_hash), "Task already exists");
@@ -153,12 +162,28 @@ decl_module! {
 			<ContributionsCount<T>>::insert(&_task_id, new_task_contributions_count);
 			<ContributionsIndex<T>>::insert(contribution_id, task_contributions_count);
 
+			let result_vote_count =<ContributionsResultVoteCount<T>>::get((_task_id.clone(),_result_vote.clone()));
+
+		    let new_result_vote_count = result_vote_count.checked_add(1)
+            .ok_or("Overflow adding a new vote to result")?;
+
+			<ContributionsResultVoteCount<T>>::remove((_task_id.clone(),_result_vote.clone()));	
+			<ContributionsResultVoteCount<T>>::insert((_task_id.clone(),_result_vote.clone()),new_result_vote_count);
+
+			let task_consensus_threshold =<Tasks<T>>::get(_task_id).threshold;
+
+			if new_result_vote_count >= task_consensus_threshold {
+				<TasksConsensus<T>>::insert(_task_id.clone(), _result_vote);	
+			}
+
+
 			Self::deposit_event(RawEvent::ContributionReceived(worker, _task_id,_result_vote));		
 			Ok(())
 		}
 
 		pub fn reveal(_origin,_task_id: T::Hash,_result_unseal: T::Hash) -> Result {
 			let worker = ensure_signed(_origin)?;
+			ensure!(<TasksConsensus<T>>::exists(_task_id), "Consensus on task must be reached");
 			//TODO
 			Ok(())
 		}
